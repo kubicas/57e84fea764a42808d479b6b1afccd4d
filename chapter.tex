@@ -1,0 +1,332 @@
+%------------------------------------------------------------------------------
+\chapter{cppmake\index{cppmake}}
+\label{sec:share000.cppmake}
+%------------------------------------------------------------------------------
+\section{Introduction}
+\label{sec:share000.cppmake.introduction}
+%------------------------------------------------------------------------------
+
+cppmake allows expressing build dependencies in C++. A build policy then takes
+care of building targets, or rejecting a build, when the sources are not conform
+the policy.
+
+cppmake, is a library written in standard C++, with limited platform specific
+code. Also the policy is written in C++. The policy can be adjusted to conform
+the needs of a specific project. Choosing for a standard C++ solution assures that:
+
+\begin{itemize}
+\item C++ programmers do not need to learn an additional language for expressing 
+      their build expressions
+\item C++ programmers are able to debug the make process. Please note that (almost)
+      none of the other build languages provide debugging facilities
+\item Build, product and project policies (which exceed standard build expressions)
+      can be expressed naturally in C++. Think about running class tests, deploying
+	  software, static code checking, promotion, reporting etc.
+\item Portability
+\end{itemize}
+
+Although using the development language as a make language is an almost\footnote{
+The tool cons is written in Perl and uses Perl scripts as a make language for building
+Perl projects (and more). The tool scons is written in Python and uses Python scripts 
+as a make language for building Python projects (and more).}
+unique idea, this is not the major ambition of cppmake. The major ambition is: 
+'providing a safe system for incremental builds'. The fact that any build tool I've 
+worked with so far could not guarantee a safe incremental build, resulting in the 
+need for complete rebuilds. And even those were often not safe either; not safe in 
+the sense that the output was not deterministic.
+
+%------------------------------------------------------------------------------
+\section{Safe incremental builds and policy}
+\label{sec:share000.cppmake.safe_incremental_builds}
+%------------------------------------------------------------------------------
+
+Having safe incremental builds require a specific build policy. When it is allowed
+to do everything that is not explicitly forbidden by the C++ standard, then a
+safe incremental build is not possible. As C++ allows so much, because the language
+focusses so much on performance over safety, one could develop countless policies
+that fullfill the `safe incremental build' ambition to a desired extend.
+
+Respecting C++' fundamental choice to focus on performance, it is also not the
+intention for cppmake to define one specific policy. Instead, projects may develop
+their own build policy that fits their needs best. On the other hand !share000!
+does provide only one policy. So when a product owner chooses another policy, it
+will be under e.g. !share001!.
+
+The !share000! policy takes a data driven approach to allow safe incremental builds.
+The !share000! policy relates to the following data:
+\begin{enumerate}
+\item Specific data files read and written by cppmake
+\item Sources from the archive (git)
+\item Artifacts, created upon the initiative of cppmake. (in !.../procts/*/tgt! and 
+      !.../procts/*/obj!)
+\end{enumerate}
+
+It seems as if tools (like compiler and linker) are missing, but these tools are
+supposed all to be present in the archive under version control.
+
+The specific data files for cppmake are binary, and the developer is supposed not
+to modify the content. When any of these files are deleted, then cppmake will do
+a rebuild all afterall. In contrast to other build tools, the developer should also
+not modify any file in !.../procts/*/tgt! and !.../procts/*/obj!. cppmake will check
+whether any file was modified. In case of any violation of this rule, cppmake will
+deliberatly punish the developer by enforcing a full build. In this way we hope
+that the developer learns not to touch !.../procts/*/tgt! and !.../procts/*/obj!
+files.
+
+This policy assures cppmake has sole control over all files that participate in
+building the targets. Items 1 and 3 are not to be touched by anyone or anything
+except cppmake, item 2 is under source control, being git. cppmake will simply
+depend on git in finding out which sources have changed compared to the former
+build.
+
+The data oriented approach also implies that when the developer issues a build,
+but the sources of a failing unit were not changed, then cppmake will not build
+the unit again, because cppmake is convinced that the result shall be the same.
+Instead, cppmake will present the errors and warning of the previous build.
+To realize this, cppmake will store all errors and warnings for any last build
+of a unit.
+
+Please note that the data oriented approach is not sufficient for safe incremental
+builds. Additionally, a correct dependency graph is to be maintained, that provides
+the information to decide what has to be rebuild.
+
+%------------------------------------------------------------------------------
+\section{Design overview}
+\label{sec:share000.cppmake.design_overview}
+%------------------------------------------------------------------------------
+
+See figure~\ref{fig:share000.cppmake.overview} for an overview of the cppmake
+design. The above mentioned !policy! takes a central position. It is the hope and
+intention that when other product owners formulate another policy, that they only
+need to change the !policy! component.
+
+\begin{figure}[tbh]
+    \begin{center}
+        \includegraphics{\procts share000/comp/doc_cppmake/class_overview.eps}
+    \end{center}
+    \caption{Overview (UML class diagram) }
+	\label{fig:share000.cppmake.overview}
+\end{figure}
+
+Most components surrounding the !policy! (!depgraph!, !target!, !path!, !ide_filter!
+!makeables!, !process! and !executor!) take up a specific responsibility of which
+is currently expected that it will be needed for any policy. So, it is the hope and
+intention that when other product owners formulate another policy, that they do
+{\em not} need to change those components.
+
+A rather recognizable component is the !makefile!. The !makefile! will contain the
+build or dependency instruction provided by the developer. As indicated earlier,
+the !makefile! is also a C++ file, and whenever it is changed it needs to be 
+recompiled. cppmake shall take care of that. After building the !makefiles!s 
+(typically you'll find multiple !makefiles!s), 9 components at the top of
+figure~\ref{fig:share000.cppmake.overview} will be linked into a !.dll! or !.so!.
+
+The !make.exe! component is responsible for loading the !.dll! or !.so! and starting
+the build. All build knowledge shall be in the !.dll! or !.so!; !make.exe! is only
+a platform for executing such a build from the !.dll! or !.so!.
+
+%------------------------------------------------------------------------------
+\section{Make.exe}
+\label{sec:share000.cppmake.make.exe}
+%------------------------------------------------------------------------------
+
+The responsibilities of !make.exe! are: 
+
+\begin{enumerate}
+\item Copy the !makefile.dll! to the procts directory
+\item Assure that only one !cppmake.exe! is running within projects
+\item Dynamically link to two functions of !makefile.dll!:
+\begin{itemize}
+   \item !execute()!
+   \item !abort_execution()!
+\end{itemize}
+\item Call !execute()! while passing the commandline parameters 
+\item In case of a control-C, call !abort_execution!
+\item In case !execute()! returns 1, start all over from item 1.
+    This allows !makefile.dll! to build itself and after being called again it builds the targets
+\item Print "Build succeeded" when the build was succesfull and "Build failed" otherwise
+\item Return 0 when the build was succesfull and -1 otherwise
+\end{enumerate}
+
+Implementation of !cppmake.exe! is (unfortunatelly) platform dependent.
+For the user, cppmake behaves identical on any platform (just like git and LaTeX)
+Implementation of !makefile.dll! is intended to be as much standard C++ as possible.
+
+!cppmake.exe! shall be build by `flying start'. Due to the limited responsibility
+of !cppmake.exe!, the limited size of its source, it is not expected that !cppmake.exe!
+needs a rebuild during normal development.
+
+%------------------------------------------------------------------------------
+\section{Makefile}
+\label{sec:share000.cppmake.makefile}
+%------------------------------------------------------------------------------
+
+The !makefile!s contains a set of directives used by the cppmake tool to generate
+a targets. At link-time, the !makefile! depends on !cppmake.lib!; at compile time
+!makefile! depends on !cppmake/makefile.h!.
+
+All !makefile!s in one stem repository are compiled and linked into !makefile.dll!
+or !makefile.so!.
+This !makefile.dll! or !makefile.so! is picked up by the !make.exe! tool.
+
+A single !makefile! has typically a construction as shown in 
+listing~\ref{lst:share000.cppmake.makefile}. By the object !main! is in fact a
+static object which will be constructed when !makefile.dll! or !makefile.so! are
+loaded. By inheriting from !cppmake::main_t!, all such static objects are added
+to a global singleton list. To realize the build, all objects in that list will
+be visited by calling overloaded virtual functions.
+
+\begin{lstlisting}[
+    float,
+    frame=trBL,
+    caption={The make object},
+    label={lst:share000.cppmake.makefile},
+    gobble=4]
+	namespace { // anonymous
+
+	class main_t
+		: cppmake::main_t
+	{
+		...
+	} main;
+
+	}; // namespace anonymous
+\end{lstlisting}
+
+Note that it is no problem that all these static object have the same type name
+(!main_t!) and object name (!main!), because all these objects are in an anonymous
+namespace. A single object is intended for a single target. Note that it is also
+possible to have multiple objects derived from !cppmake::main_t! in the same
+!makefile.cpp!. In that case multiple targets will be build. Of coarse, the type
+and object name must differ make objects for multi target make files.
+
+%------------------------------------------------------------------------------
+\section{Executor}
+\label{sec:share000.cppmake.executor}
+%------------------------------------------------------------------------------
+
+The executor is responsible for:
+\begin{description}
+\item[\ix{RT.executor.create.policy}]
+    Create the policy and pass the commandline arguements
+\item[\ix{RT.executor.build}]
+    In case a build needs to be performed:
+    \begin{itemize}
+    \item start the processes which are supplied by the dependency graph
+    \item report them complete when a process is finished
+    \item continue doing this until no more processes are supplied
+    \end{itemize}
+\item[\ix{RT.executor.build.threading}]
+    Handle all threading threading issues. This includes
+    presenting a thread safe print line so that policy can print on the console
+\item[\ix{RT.executor.build.abort}]
+    Handle user abort by aborting all running processes. Finish book keeping in a controlled way.
+\item[\ix{RT.executor.exceptions}]
+    Catching all exceptions and pass them on to policy when possible
+\item[\ix{RT.executor.return}]
+    Return:
+    \begin{itemize}
+    \item  0 when build finished succefully and no rerun is needed, 
+    \item  1 when build finished succefully and rerun is needed,
+    \item -1 when the build was not successfull
+    \end{itemize}
+\end{description}
+
+A scenario where !policy! found that there is nothing to build is worked out
+in scenario of figure~\ref{fig:share000.cppmake.cppmake_test_executor_nothing_to_build_uml_sd}.
+
+\begin{figure}[tbh]
+    \begin{center}
+        \includegraphics{\procts share000/tgt/fig/cppmake_test_executor_nothing_to_build_uml_sd.eps}
+    \end{center}
+    \caption{cppmake executor nothing to build (UML sequence diagram) }
+	\label{fig:share000.cppmake.cppmake_test_executor_nothing_to_build_uml_sd}
+\end{figure}
+
+%------------------------------------------------------------------------------
+\section{IDE filter}
+\label{sec:share000.cppmake.ide_filter}
+%------------------------------------------------------------------------------
+
+The IDE filter is responsible for:
+\begin{itemize}
+\item Converting a generic output message from a makeable into a message 
+	  that can be parsed by a specific IDE. When any message which includes a
+	  file path and line number is selected, the IDE can show the related source.
+\item IDE filter shall support the following message types:
+    \begin{itemize}
+	\item error
+    \item warning
+    \item note
+    \end{itemize}
+\item Upon request, the IDE filter can create project and solution files which
+    resemble the code structure of the stem repository.
+\end{itemize}
+
+%------------------------------------------------------------------------------
+\section{Process}
+\label{sec:share000.cppmake.process}
+%------------------------------------------------------------------------------
+
+The !process! component is responsible for:
+\begin{itemize}
+\item Hosting a general make process
+\item Output of the make process shall be forwarded to the !makeable! object
+\item The process can be executed and aborted
+\item Encapsulate platflorm specific solutions (for forwarding process output)
+\end{itemize}
+
+%------------------------------------------------------------------------------
+\section{Makeable}
+\label{sec:share000.cppmake.makeable}
+%------------------------------------------------------------------------------
+
+The !makeable! components are responsible for:
+\begin{itemize}
+\item Providing specific make processes, such as compile and link
+\item Translating process output into logger messages
+\item Having full control over all intermediate and target objects. The user
+      of the !makeable! object can specify the file path of
+	  every intermediate and target object.
+\item Providing roll-back when an process is aborted, without any loss of data.
+      Roll back of an aborted process implies that the end situation is identical
+	  as if the process wasn't started at all.
+\end{itemize}
+
+%------------------------------------------------------------------------------
+\section{Depgraph}
+\label{sec:share000.cppmake.depgraph}
+%------------------------------------------------------------------------------
+
+The !depgraph! component is responsible for:
+\begin{itemize}
+\item Indicating which processes can be started next
+\item Storing and retreiving the status of the build. Including aborted builds.
+\end{itemize}
+
+%------------------------------------------------------------------------------
+\section{Path}
+\label{sec:share000.cppmake.path}
+%------------------------------------------------------------------------------
+
+The !path! component is responsible for:
+\begin{itemize}
+\item Holding the path (directory and filename) of every file object
+\item Having a file system model of all involved files (This is needed to verify
+      whether a developer has modified any intermediate or targetfile without
+	  using cppmake)
+\end{itemize}
+
+%------------------------------------------------------------------------------
+\section{Target}
+\label{sec:share000.cppmake.target}
+%------------------------------------------------------------------------------
+
+The !target! component is responsible for:
+\begin{itemize}
+\item Identifying targets
+\item Relating targets to host platforms (e.g. Linux, Windows)
+\item Relating targets to toolsets (e.g. MS, GCC)
+\item Relating targets to target platforms (e.g. 32 bit, 64 bit)
+\item Relating targets to configurations (e.g. debug, release)
+\end{itemize}
